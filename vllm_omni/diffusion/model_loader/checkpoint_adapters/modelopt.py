@@ -281,8 +281,6 @@ class ModelOptNvFp4CheckpointAdapter(ModelOptFp8CheckpointAdapter):
     _PRE_QUANT_SCALE_SUFFIX = ".pre_quant_scale"
     _NVFP4_BLOCK_SIZE = 16
     _FULL_PRECISION_DTYPES = (torch.float32, torch.float16, torch.bfloat16)
-    # E2M1 code points indexed by nibble (bit 3 is the sign bit).
-    _E2M1_VALUES = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0)
 
     @staticmethod
     def _is_checkpoint_quant_config(quant_config: object | None) -> bool:
@@ -399,12 +397,10 @@ class ModelOptNvFp4CheckpointAdapter(ModelOptFp8CheckpointAdapter):
                 f"Unsupported ModelOpt NVFP4 weight_scale_2 shape {tuple(global_scale.shape)} for weight {name!r}"
             )
 
+        from vllm.model_executor.layers.quantization.utils.nvfp4_emulation_utils import break_fp4_bytes
+
+        values = break_fp4_bytes(loaded_weight, torch.float32).reshape(rows, -1, self._NVFP4_BLOCK_SIZE)
         device = loaded_weight.device
-        e2m1 = torch.tensor(self._E2M1_VALUES, dtype=torch.float32, device=device)
-        # ModelOpt packs element 2*i in the low nibble and 2*i + 1 in the high nibble.
-        low = (loaded_weight & 0x0F).to(torch.long)
-        high = (loaded_weight >> 4).to(torch.long)
-        values = torch.stack((e2m1[low], e2m1[high]), dim=-1).reshape(rows, -1, self._NVFP4_BLOCK_SIZE)
         scale = block_scale.to(device=device, dtype=torch.float32) * global_scale.to(
             device=device, dtype=torch.float32
         ).reshape(())
